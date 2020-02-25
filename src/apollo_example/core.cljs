@@ -1,67 +1,114 @@
 (ns apollo-example.core
   (:require [helix.hooks :as hooks]
             [reagent.core :as r]
+            [clojure.string]
+            [graphql-query.core :refer [graphql-query]]
             ["react" :as react]
-            ["apollo-boost" :default ApolloClient :refer [gql]]
+            ["apollo-client" :refer [ApolloClient]]
+            ["graphql-tag" :default gql]
+            ["apollo-link-http" :refer [HttpLink]]
+            ["apollo-cache-inmemory" :refer [InMemoryCache]]
             ["@apollo/react-hooks" :as apollo :refer [ApolloProvider useQuery useMutation]]
             [cljs-bean.core :as b :refer [bean ->clj ->js]]))
 
-(def client (ApolloClient. #js {:uri "http://localhost:8888/graphql"}))
 
 
-(def all-games-query (gql "{games {id summary name}}"))
 
-(def game-query (gql "query Game($id: ID!)
-  {
-  game_by_id(id: $id) {
-    name
-    id
-    summary
-    rating_summary {
-average
-}
-  }
-}"))
-(def game-and-my-rating-query (gql "query Game($id: ID!)
-  {
-  game_by_id(id: $id) {
-    name
-    id
-    summary
-    rating_summary {
-average
-}
-  }
-game_rating(game_id: $id, member_id: \"37\") {
-    rating
-    game {
-      name
-    }
-  }
-}"))
+(def client (ApolloClient. #js {:link (HttpLink. #js {:uri "http://localhost:8888/graphql"})
+                                :cache (InMemoryCache.  )
+                                :name "apollo-cljs-Doc"
+                                :queryDeduplication false
+                                :defaultOptions (->js {:watchQuery {:fetchPolicy "cache-and-network"}})
+                                :connectToDevTools true}))
 
-(def edit-game-query (gql "mutation EditGameSummary($id: ID!, $summary: String!) {
-    edit_game(id: $id, summary: $summary) {
-       summary
-       id
-}
-}"))
 
-(def my-rating (gql "query MyRating($id: ID!) {
- game_rating(game_id: $id, member_id: \"37\") {
-    rating
-    game {
-      name
-    }
-  }
-}"))
+(def all-games-query (gql (graphql-query {:queries [[:games [:id :summary :name]]]})))
 
-(def rate-game-query (gql "mutation RateGameQuery($game_id: ID, $rating: Int!) {
-    rate_game(game_id: $game_id, member_id: \"37\", rating: $rating) {
-name
-id
-}
-}"))
+
+
+
+
+
+
+
+(def game-query (gql
+                 (graphql-query {:operation {:operation/type :query
+                                             :operation/name :Game}
+                                 :variables [{:variable/name :$id
+                                              :variable/type :ID!}]
+                                 :queries [[:game_by_id {:id :$id} [:name :id :summary [:rating_summary [:average]]]]]})))
+
+
+(def game-and-my-rating-query (gql (graphql-query {:operation {:operation/type :query
+
+                                                               :operation/name :Game}
+                                                   :variables [{:variable/name :$id
+                                                                :variable/type :ID!}]
+                                                   :queries [[:game_by_id {:id :$id} [:name
+                                                                                      :id
+                                                                                      :summary
+                                                                                      [:rating_summary [:average]]]]
+                                                             [:game_rating {:game_id :$id
+                                                                            :member_id "37"} [:rating
+                                                                                              [:game [:name]]]]]}
+                                                  )))
+
+
+(def edit-game-query (gql (graphql-query {:operation {:operation/type :mutation
+                                                      :operation/name :EditGameSummary}
+                                          :variables [{:variable/name :$id
+                                                       :variable/type :ID!}
+                                                      {:variable/name :$summary
+                                                       :variable/type :String!}]
+                                          :queries [[:edit_game {:id :$id
+                                                                 :summary :$summary} [:summary
+                                                                                      :id]]]})))
+
+
+
+(def my-rating (gql (graphql-query {:operation {:operation/type :query
+                                                :operation/name :MyRating}
+                                    :variables [{:variable/name :$id
+                                                 :variable/type :ID!}]
+                                    :queries [{:query/data [:game_rating {:game_id :$id
+                                                                          :member_id "37"}
+                                                            [:meta/typename
+                                                             :rating
+                                                             [:game [ {:field/data [:name]
+                                                                       :field/alias :name}]]]]
+                                               :query/alias :game_rating}]})))
+
+
+(def rate-game-query (gql (graphql-query {:operation {:operation/type :mutation
+                                                      :operation/name :RateGame}
+                                          :variables [{:variable/name :$game_id
+                                                       :variable/type :ID!}
+                                                      {:variable/name :$rating
+                                                       :variable/type :Int!}]
+                                          :queries [[:rate-game {:game-id :$game_id
+                                                                 :member-id "37"
+                                                                 :rating :$rating}
+                                                     [:name :id]]]}
+                                         {:kw->gql-name #(clojure.string/replace (name %) #"-" "_")})))
+
+(clojure.string/replace "_" #"_" "-")
+(comment
+  (.watchQuery client #js {:query my-rating})
+  (def q (.query client #js {:query game-and-my-rating-query
+                             ;;          :fetchPolicy "no-cache"
+                             :variables #js {:id "1234"}}))
+  (.then q println)
+  (def w (.watchQuery client #js {:query game-and-my-rating-query
+                                        ;                 :fetchPolicy "no-cache"
+                                  :variables #js {:id "1234"}
+                                  :notifyOnNetworkStatusChange false
+                                  :pollInterval 1000}))
+  (.-variables w)
+  (.stopPolling w)
+  (.refetch w #js {:id "1234"})
+  (.subscribe w #js {:next #(println "bbb" (.-loading %) %)})
+  (-> (.result w)
+      (.then println)))
 
 (defn EditGameButton [props]
   (let [{:keys [id summary]} (bean props)
@@ -145,6 +192,8 @@ id
    [:> Container]])
 
 (comment
+  *clojurescript-version*
+  (js->clj (r/as-element [:div "aa"]))
   (r/as-element [:div "aa" [:div "bb" [:div "x"]]]))
 
 (defn ^:dev/after-load start []
